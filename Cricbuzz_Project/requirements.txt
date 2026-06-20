@@ -1,0 +1,9 @@
+mysql-connector-python
+requests
+pandas
+streamlit
+datetime
+matplotlib
+seaborn
+scikit-learn
+numpy
