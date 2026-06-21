@@ -279,4 +279,113 @@ for venue_id in venue_ids:
 conn.commit()
 print(f"Venue details inserted successfully. Total records: {count}")
 
+# 1. API Connection Configuration for seies_2024
+url = "https://cricbuzz-cricket.p.rapidapi.com/series/v1/international"
 
+headers = {
+	"x-rapidapi-key": "9c1dce7cf0msh184ba687d7c6391p103645jsn6df665fcbcb2",
+	"x-rapidapi-host": "cricbuzz-cricket.p.rapidapi.com",
+	"Content-Type": "application/json"
+}
+
+response = requests.get(url, headers=headers)
+
+if response.status_code == 200:
+    data = response.json()
+    series_map = data.get("seriesMapProto", [])
+    
+    # 2. Database Table Initialization
+    create_table_query = """
+    CREATE TABLE IF NOT EXISTS international_series_2024 (
+        series_id INT NOT NULL,
+        series_name VARCHAR(255) NOT NULL,
+        host_country VARCHAR(100) DEFAULT 'International',
+        match_type VARCHAR(50) DEFAULT 'Unknown',
+        start_date DATE,
+        end_date DATE,
+        total_matches INT DEFAULT 0,
+        PRIMARY KEY (series_id)
+    );
+    """
+    cursor.execute(create_table_query)
+
+    records_to_insert = []
+
+    # 3. Processing Payload Data
+    for date_block in series_map:
+        series_list = date_block.get("series", [])
+        date_str = date_block.get("date", "Unknown Date")
+
+        for series in series_list:
+            series_id = series.get("id")
+
+            if not series_id:
+                continue
+
+            start_dt_raw = series.get("startDt")
+            end_dt_raw = series.get("endDt")
+            
+            start_date_sql = None
+            end_date_sql = None
+            start_year = None
+
+            # FIXED: Robust String/Numeric Timestamp Conversion Strategy
+            try:
+                if start_dt_raw:
+                    dt_obj = datetime.fromtimestamp(float(start_dt_raw) / 1000)
+                    start_year = str(dt_obj.year)
+                    start_date_sql = dt_obj.date()
+                
+                if end_dt_raw:
+                    end_date_sql = datetime.fromtimestamp(float(end_dt_raw) / 1000).date()
+            except (ValueError, TypeError):
+                # Skip to next record if timestamp data is corrupt or unparsable
+                continue
+
+            # 4. Filter strictly for the Year 2024
+            if '2024' in date_str or start_year == '2024':
+                series_name = series.get("name", "Unknown Series")
+                host_country = series.get("hostContext") or series.get(
+                    "hostCountry", "International"
+                )
+                match_type = series.get("matchType", "International")
+
+                total_matches = len(series_list)
+                
+
+                records_to_insert.append(
+                    (
+                        series_id,
+                        series_name,
+                        host_country,
+                        match_type,
+                        start_date_sql,
+                        end_date_sql,
+                        int(total_matches),
+                    )
+                )
+
+    # 5. Execute Optimized Batch Insertion
+    insert_query = """
+    INSERT INTO international_series_2024 
+    (series_id, series_name, host_country, match_type, start_date, end_date, total_matches)
+    VALUES (%s, %s, %s, %s, %s, %s, %s)
+    ON DUPLICATE KEY UPDATE 
+        series_name = VALUES(series_name),
+        host_country = VALUES(host_country),
+        match_type = VALUES(match_type),
+        total_matches = VALUES(total_matches);
+    """
+
+    if records_to_insert:
+        cursor.executemany(insert_query, records_to_insert)
+        conn.commit()
+        print(f"Successfully stored {len(records_to_insert)} unique 2024 international series rows into the database!")
+    else:
+        print("No matches compiled matching year filter specifications.")
+
+else:
+    print(f"API Request Failed: Status code {response.status_code}")
+
+cursor.close()
+conn.close()
