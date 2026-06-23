@@ -1,6 +1,5 @@
 import mysql.connector
 import requests
-import streamlit as st
 import pandas as pd
 from datetime import datetime
 
@@ -224,19 +223,6 @@ for record in match_records:
 conn.commit()
 print(f"Successfully processed {inserted_count} records.")
 
-#create table for query 3
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS ODI_match_scorecard (
-                player_id INT PRIMARY KEY,
-                player_name VARCHAR(255),
-                runs VARCHAR(100),
-                batting_avg VARCHAR(100),
-                venue_name VARCHAR(255),
-                venue_city VARCHAR(100)
-            )
-""")
-conn.commit()
-print("Table created successfully")
 
 #create table for query 4
 cursor.execute("""
@@ -249,37 +235,131 @@ CREATE TABLE IF NOT EXISTS venue_details (
             )
 """)
 conn.commit()
-print("Table created successfully")
+print("Table venue_details created successfully")
 
-sql_query = """select venue_id from matches;"""
+sql_query = """SELECT DISTINCT venue_id FROM matches WHERE venue_id IS NOT NULL;"""
 cursor.execute(sql_query)
 venue_ids = cursor.fetchall()
 count=0
-for venue_id in venue_ids:
-    url = f"https://cricbuzz-cricket.p.rapidapi.com/venues/v1/{venue_id[0]}"
-    headers = {
-        "x-rapidapi-key": "1b0e280e4dmshf40794f4f289c27p1311a4jsn0a577eeb6dd4",
-        "x-rapidapi-host": "cricbuzz-cricket.p.rapidapi.com",
-        "Content-Type": "application/json"
-    }
-    response = requests.get(url, headers=headers)
-    venue_data = response.json()
-    venue_record = (
-        venue_data.get("id"),
-        venue_data.get("ground"),
-        venue_data.get("city"),
-        venue_data.get("country"),
-        venue_data.get("capacity")
-    )
-    insert_query = """
-    INSERT INTO venue_details (venue_id, venue_name, venue_city, venue_country, venue_capacity)
-    VALUES (%s, %s, %s, %s, %s) """
-    cursor.execute(insert_query, venue_record)
-    count+=1
-conn.commit()
-print(f"Venue details inserted successfully. Total records: {count}")
+for (venue_id,) in venue_ids:
+    url = f"https://cricbuzz-cricket.p.rapidapi.com/venues/v1/{venue_id}"
 
-# 1. API Connection Configuration for seies_2024
+    headers = {
+	    "x-rapidapi-key": "9c1dce7cf0msh184ba687d7c6391p103645jsn6df665fcbcb2",
+	    "x-rapidapi-host": "cricbuzz-cricket.p.rapidapi.com",
+	    "Content-Type": "application/json"
+    }
+
+  
+    try:
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            venue_data = response.json()
+            
+            # Map the record correctly using the loop's venue_id variable
+            venue_record = (
+                venue_id,  
+                venue_data.get("ground"),
+                venue_data.get("city"),
+                venue_data.get("country"),
+                venue_data.get("capacity")
+            )
+            
+            # 3. Insert data using IGNORE to skip existing records safely
+            insert_query = """
+            INSERT IGNORE INTO venue_details (venue_id, venue_name, venue_city, venue_country, venue_capacity)
+            VALUES (%s, %s, %s, %s, %s);
+            """
+            cursor.execute(insert_query, venue_record)
+            count += 1
+            
+        else:
+            print(f"Skipping ID {venue_id}: API responded with status {response.status_code}")
+            
+    except Exception as e:
+        print(f"Error processing ID {venue_id}: {e}")
+
+#  Commit all data writes safely at the end
+conn.commit()
+print(f"Successfully processed and inserted {count} records.")
+
+
+#query for highest individual score by format
+
+url = "https://cricbuzz-cricket.p.rapidapi.com/stats/v1/player/8733/batting"
+
+headers = {
+	"x-rapidapi-key": "9c1dce7cf0msh184ba687d7c6391p103645jsn6df665fcbcb2",
+	"x-rapidapi-host": "cricbuzz-cricket.p.rapidapi.com",
+	"Content-Type": "application/json"
+}
+
+response = requests.get(url, headers=headers)
+data = response.json()
+stats_map = {row["values"][0]: row["values"][1:] for row in data["values"]}
+
+# Extract formats from headers (skipping 'ROWHEADER')
+formats = data["headers"][1:] 
+
+# Create table (Run this once in your DB console or via Python)
+create_table_query = """
+CREATE TABLE IF NOT EXISTS player_stats (
+    player_id INT,
+    format_type VARCHAR(10),
+    matches INT,
+    innings INT,
+    runs INT,
+    balls INT,
+    highest_score INT,
+    average DECIMAL(5,2),
+    strike_rate DECIMAL(5,2),
+    not_outs INT,
+    fours INT,
+    sixes INT,
+    ducks INT,
+    fifties INT,
+    hundreds INT,
+    PRIMARY KEY (player_id, format_type)
+);
+"""
+cursor.execute(create_table_query)
+
+# Loop through each format column and construct tuples
+player_id = 8733 # Parsed from your appIndex URL string if needed
+
+for index, format_name in enumerate(formats):
+    record = (
+        player_id,
+        format_name,
+        int(stats_map["Matches"][index]),
+        int(stats_map["Innings"][index]),
+        int(stats_map["Runs"][index]),
+        int(stats_map["Balls"][index]),
+        int(stats_map["Highest"][index]),
+        float(stats_map["Average"][index]),
+        float(stats_map["SR"][index]),
+        int(stats_map["Not Out"][index]),
+        int(stats_map["Fours"][index]),
+        int(stats_map["Sixes"][index]),
+        int(stats_map["Ducks"][index]),
+        int(stats_map["50s"][index]),
+        int(stats_map["100s"][index])
+    )
+    
+    insert_query = """
+    INSERT INTO player_stats (
+        player_id, format_type, matches, innings, runs, balls, highest_score, 
+        average, strike_rate, not_outs, fours, sixes, ducks, fifties, hundreds
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON DUPLICATE KEY UPDATE runs=VALUES(runs), matches=VALUES(matches);
+    """
+    cursor.execute(insert_query, record)
+
+conn.commit()
+print("Successfully stored format stats.")
+
+# API Connection Configuration
 url = "https://cricbuzz-cricket.p.rapidapi.com/series/v1/international"
 
 headers = {
@@ -294,7 +374,7 @@ if response.status_code == 200:
     data = response.json()
     series_map = data.get("seriesMapProto", [])
     
-    # 2. Database Table Initialization
+    # Database Table Initialization
     create_table_query = """
     CREATE TABLE IF NOT EXISTS international_series_2024 (
         series_id INT NOT NULL,
@@ -311,7 +391,7 @@ if response.status_code == 200:
 
     records_to_insert = []
 
-    # 3. Processing Payload Data
+    # Processing Payload Data
     for date_block in series_map:
         series_list = date_block.get("series", [])
         date_str = date_block.get("date", "Unknown Date")
@@ -342,7 +422,7 @@ if response.status_code == 200:
                 # Skip to next record if timestamp data is corrupt or unparsable
                 continue
 
-            # 4. Filter strictly for the Year 2024
+            #Filter strictly for the Year 2024
             if '2024' in date_str or start_year == '2024':
                 series_name = series.get("name", "Unknown Series")
                 host_country = series.get("hostContext") or series.get(
@@ -365,7 +445,7 @@ if response.status_code == 200:
                     )
                 )
 
-    # 5. Execute Optimized Batch Insertion
+    # Execute Optimized Batch Insertion
     insert_query = """
     INSERT INTO international_series_2024 
     (series_id, series_name, host_country, match_type, start_date, end_date, total_matches)
