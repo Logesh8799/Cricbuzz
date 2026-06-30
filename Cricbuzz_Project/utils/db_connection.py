@@ -1,3 +1,16 @@
+import mysql.connector
+import requests
+import pandas as pd
+from datetime import datetime
+
+#  ESTABLISH CONNECTIVITY ---
+conn = mysql.connector.connect(
+    host="127.0.0.1",
+    user="root",
+    password="*****",  #Your database password
+    database="cricbuzz"
+)
+cursor = conn.cursor(buffered=True)
 
 # CREATE PLAYERS TABLE query 1 ---
 cursor.execute("""
